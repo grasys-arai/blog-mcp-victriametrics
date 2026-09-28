@@ -1,0 +1,16 @@
+[Unit]
+Description={{ item.description }}
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+User=victoria
+Group=victoria
+ExecStart=/usr/local/bin/{{ item.binary }} {{ item.args }}
+Restart=on-failure
+LimitNOFILE=1048576
+NoNewPrivileges=true
+ProtectHome=true
+
+[Install]
+WantedBy=multi-user.target

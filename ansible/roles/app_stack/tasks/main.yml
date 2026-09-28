@@ -1,0 +1,73 @@
+---
+- name: Install Nginx on the VM
+  ansible.builtin.package:
+    name: nginx
+    state: present
+
+- name: Create application directories
+  ansible.builtin.file:
+    path: "{{ item }}"
+    state: directory
+    mode: "0755"
+  loop:
+    - /var/www/middleware
+    - /etc/alloy
+    - "/opt/nginx-exporter-{{ nginx_exporter_version }}"
+
+- name: Install application configuration
+  ansible.builtin.template:
+    src: "{{ item.src }}"
+    dest: "{{ item.dest }}"
+    owner: root
+    group: root
+    mode: "0644"
+  loop:
+    - { src: nginx.conf.j2, dest: /etc/nginx/conf.d/middleware.conf }
+    - { src: index.html.j2, dest: /var/www/middleware/index.html }
+    - { src: alloy.config.j2, dest: /etc/alloy/config.alloy }
+  notify: Restart application services
+
+- name: Disable Debian default Nginx site
+  ansible.builtin.file:
+    path: /etc/nginx/sites-enabled/default
+    state: absent
+  when: ansible_facts.os_family == 'Debian'
+  notify: Restart application services
+
+- name: Download application exporters
+  ansible.builtin.get_url:
+    url: "https://github.com/nginx/nginx-prometheus-exporter/releases/download/v{{ nginx_exporter_version }}/nginx-prometheus-exporter_{{ nginx_exporter_version }}_linux_{{ binary_arch }}.tar.gz"
+    dest: "/tmp/nginx-exporter-{{ nginx_exporter_version }}.tar.gz"
+    mode: "0644"
+
+- name: Extract application exporters
+  ansible.builtin.unarchive:
+    src: "/tmp/nginx-exporter-{{ nginx_exporter_version }}.tar.gz"
+    dest: "/opt/nginx-exporter-{{ nginx_exporter_version }}"
+    remote_src: true
+    creates: "/opt/nginx-exporter-{{ nginx_exporter_version }}/nginx-prometheus-exporter"
+  notify: Restart application services
+
+- name: Install application exporter binaries
+  ansible.builtin.copy:
+    src: "/opt/nginx-exporter-{{ nginx_exporter_version }}/nginx-prometheus-exporter"
+    dest: /usr/local/bin/nginx-prometheus-exporter
+    remote_src: true
+    mode: "0755"
+  notify: Restart application services
+
+- name: Install exporter services
+  ansible.builtin.template:
+    src: "{{ item }}.service.j2"
+    dest: "/etc/systemd/system/{{ item }}.service"
+    mode: "0644"
+  loop: [nginx-exporter]
+  notify: Restart application services
+
+- name: Enable application services
+  ansible.builtin.systemd_service:
+    name: "{{ item }}"
+    enabled: true
+    state: started
+    daemon_reload: true
+  loop: [nginx, nginx-exporter, alloy]

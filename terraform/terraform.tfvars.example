@@ -1,0 +1,8 @@
+project_id = ""
+name_prefix = ""
+allowed_ssh_ranges = ["ALLOW_IP"]
+
+# Optional overrides:
+# region       = "asia-northeast1"
+# zone         = "asia-northeast1-a"
+# name_prefix  = "dialog"

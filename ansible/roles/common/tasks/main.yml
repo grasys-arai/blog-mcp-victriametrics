@@ -1,0 +1,114 @@
+---
+- name: Require a supported VM operating system
+  ansible.builtin.assert:
+    that:
+      - ansible_facts.os_family in ['Debian', 'RedHat']
+      - ansible_facts.architecture in ['x86_64', 'aarch64']
+    fail_msg: This playbook supports Debian/Ubuntu or Rocky/RHEL VMs on x86_64 or aarch64.
+
+- name: Set platform-specific package variables
+  ansible.builtin.set_fact:
+    middleware_package_manager: "{{ 'apt' if ansible_facts.os_family == 'Debian' else 'dnf' }}"
+
+- name: Install base packages on Debian-family VMs
+  ansible.builtin.apt:
+    name: [ca-certificates, curl, gpg, tar, python3-debian]
+    state: present
+    update_cache: true
+  when: ansible_facts.os_family == 'Debian'
+
+- name: Install base packages on Red Hat-family VMs
+  ansible.builtin.dnf:
+    name: [ca-certificates, curl, gnupg2, tar]
+    state: present
+    update_cache: true
+  when: ansible_facts.os_family == 'RedHat'
+
+- name: Create apt keyring directory
+  ansible.builtin.file:
+    path: /etc/apt/keyrings
+    state: directory
+    mode: "0755"
+  when: ansible_facts.os_family == 'Debian'
+
+- name: Install Grafana apt repository key
+  ansible.builtin.get_url:
+    url: https://apt.grafana.com/gpg-full.key
+    dest: /etc/apt/keyrings/grafana.asc
+    mode: "0644"
+  when: ansible_facts.os_family == 'Debian'
+
+- name: Configure Grafana apt repository
+  ansible.builtin.deb822_repository:
+    name: grafana
+    types: [deb]
+    uris: https://apt.grafana.com
+    suites: [stable]
+    components: [main]
+    signed_by: /etc/apt/keyrings/grafana.asc
+    state: present
+  when: ansible_facts.os_family == 'Debian'
+
+- name: Install Grafana RPM repository key
+  ansible.builtin.rpm_key:
+    key: https://rpm.grafana.com/gpg.key
+    state: present
+  when: ansible_facts.os_family == 'RedHat'
+
+- name: Configure Grafana RPM repository
+  ansible.builtin.yum_repository:
+    name: grafana
+    description: Grafana
+    baseurl: https://rpm.grafana.com
+    enabled: true
+    gpgcheck: true
+    gpgkey: https://rpm.grafana.com/gpg.key
+  when: ansible_facts.os_family == 'RedHat'
+
+- name: Install Grafana Alloy
+  ansible.builtin.package:
+    name: alloy
+    state: present
+
+- name: Allow Alloy to read the system journal
+  ansible.builtin.user:
+    name: alloy
+    groups: systemd-journal
+    append: true
+
+- name: Download node exporter
+  ansible.builtin.get_url:
+    url: "https://github.com/prometheus/node_exporter/releases/download/v{{ node_exporter_version }}/node_exporter-{{ node_exporter_version }}.linux-{{ binary_arch }}.tar.gz"
+    dest: "/tmp/node_exporter-{{ node_exporter_version }}.tar.gz"
+    mode: "0644"
+
+- name: Extract node exporter
+  ansible.builtin.unarchive:
+    src: "/tmp/node_exporter-{{ node_exporter_version }}.tar.gz"
+    dest: /opt
+    remote_src: true
+    creates: "/opt/node_exporter-{{ node_exporter_version }}.linux-{{ binary_arch }}/node_exporter"
+
+- name: Install node exporter binary
+  ansible.builtin.copy:
+    src: "/opt/node_exporter-{{ node_exporter_version }}.linux-{{ binary_arch }}/node_exporter"
+    dest: /usr/local/bin/node_exporter
+    remote_src: true
+    owner: root
+    group: root
+    mode: "0755"
+  notify: Restart node exporter
+
+- name: Install node exporter service
+  ansible.builtin.template:
+    src: node-exporter.service.j2
+    dest: /etc/systemd/system/node-exporter.service
+    mode: "0644"
+  notify: Restart node exporter
+
+- name: Enable node exporter
+  ansible.builtin.systemd_service:
+    name: node-exporter
+    enabled: true
+    state: started
+    daemon_reload: true

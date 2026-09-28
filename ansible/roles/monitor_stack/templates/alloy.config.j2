@@ -1,0 +1,20 @@
+logging {
+  level  = "info"
+  format = "logfmt"
+}
+
+prometheus.scrape "monitor" {
+  targets = [
+    { "__address__" = "127.0.0.1:8428", "job" = "victoriametrics" },
+    { "__address__" = "127.0.0.1:8081", "job" = "mcp-victoriametrics" },
+    { "__address__" = "127.0.0.1:9100", "job" = "node" },
+    { "__address__" = "127.0.0.1:3000", "job" = "grafana" },
+  ]
+  forward_to = [prometheus.remote_write.local.receiver]
+}
+
+prometheus.remote_write "local" {
+  endpoint {
+    url = "http://127.0.0.1:8428/api/v1/write"
+  }
+}

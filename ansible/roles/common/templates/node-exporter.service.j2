@@ -1,0 +1,17 @@
+[Unit]
+Description=Prometheus Node Exporter
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+User=nobody
+Group={{ 'nogroup' if ansible_facts.os_family == 'Debian' else 'nobody' }}
+ExecStart=/usr/local/bin/node_exporter --web.listen-address={{ admin_bind_address }}:9100
+Restart=on-failure
+ProtectSystem=strict
+ProtectHome=true
+PrivateTmp=true
+NoNewPrivileges=true
+
+[Install]
+WantedBy=multi-user.target

@@ -1,0 +1,14 @@
+[Unit]
+Description=NGINX Prometheus Exporter
+After=network-online.target nginx.service
+Requires=nginx.service
+
+[Service]
+User=nobody
+Group={{ 'nogroup' if ansible_facts.os_family == 'Debian' else 'nobody' }}
+ExecStart=/usr/local/bin/nginx-prometheus-exporter --nginx.scrape-uri=http://127.0.0.1/stub_status --web.listen-address={{ admin_bind_address }}:9113
+Restart=on-failure
+NoNewPrivileges=true
+
+[Install]
+WantedBy=multi-user.target

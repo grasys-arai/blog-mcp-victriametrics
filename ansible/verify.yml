@@ -1,0 +1,45 @@
+---
+- name: Verify application middleware
+  hosts: app
+  gather_facts: false
+  tasks:
+    - name: Check application HTTP response
+      ansible.builtin.uri:
+        url: http://127.0.0.1/
+        return_content: true
+        status_code: 200
+      register: app_health
+      failed_when: app_health.status != 200 or '"status":"ok"' not in app_health.content
+
+    - name: Check application exporters
+      ansible.builtin.uri:
+        url: "http://127.0.0.1:{{ item }}/metrics"
+        status_code: 200
+      loop: [9100, 9113]
+
+- name: Verify monitoring middleware
+  hosts: monitor
+  gather_facts: false
+  tasks:
+    - name: Check Victoria storage services
+      ansible.builtin.uri:
+        url: "http://127.0.0.1:{{ item.port }}{{ item.path }}"
+        status_code: 200
+      loop:
+        - { port: 8428, path: /health }
+
+    - name: Check MCP server readiness
+      ansible.builtin.uri:
+        url: "http://127.0.0.1:{{ item }}/health/readiness"
+        status_code: 200
+      loop: [8081]
+
+    - name: Check Grafana health
+      ansible.builtin.uri:
+        url: http://127.0.0.1:3000/api/health
+        status_code: 200
+
+    - name: Check monitor node exporter
+      ansible.builtin.uri:
+        url: http://127.0.0.1:9100/metrics
+        status_code: 200

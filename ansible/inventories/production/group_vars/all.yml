@@ -1,0 +1,21 @@
+---
+# Trial-only credentials. Replace and vault these values before production use.
+grafana_admin_password: admin
+
+# Restrict management endpoints by default. Use a trusted private interface
+# instead of 0.0.0.0 when remote management access is required.
+service_bind_address: 0.0.0.0
+admin_bind_address: 0.0.0.0
+
+# Address reachable from the app/db virtual machines.
+monitor_address: "{{ hostvars[groups['monitor'][0]].internal_ip }}"
+victoriametrics_url: "http://{{ monitor_address }}:8428"
+
+# Native package/binary versions. Upgrade these deliberately and test first.
+node_exporter_version: 1.12.1
+nginx_exporter_version: 1.5.1
+victoriametrics_version: 1.152.0
+mcp_victoriametrics_version: 1.18.0
+
+binary_arch: "{{ {'x86_64': 'amd64', 'aarch64': 'arm64'}[ansible_facts['architecture']] }}"
+mcp_arch: "{{ {'x86_64': 'x86_64', 'aarch64': 'arm64'}[ansible_facts['architecture']] }}"

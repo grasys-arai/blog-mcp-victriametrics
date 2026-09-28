@@ -1,0 +1,129 @@
+---
+- name: Reject placeholder Grafana credentials
+  ansible.builtin.assert:
+    that: grafana_admin_password != 'CHANGE_ME'
+    fail_msg: Set and vault grafana_admin_password in group_vars.
+
+- name: Install Grafana on the monitoring VM
+  ansible.builtin.package:
+    name: grafana
+    state: present
+
+- name: Create Victoria service account
+  ansible.builtin.user:
+    name: victoria
+    system: true
+    home: /var/lib/victoria
+    create_home: false
+    shell: /usr/sbin/nologin
+
+- name: Create monitoring directories
+  ansible.builtin.file:
+    path: "{{ item.path }}"
+    state: directory
+    owner: "{{ item.owner | default('root') }}"
+    group: "{{ item.group | default(item.owner | default('root')) }}"
+    mode: "{{ item.mode | default('0755') }}"
+  loop:
+    - { path: /var/lib/victoria, owner: victoria }
+    - { path: /var/lib/victoria/metrics, owner: victoria }
+    - { path: /etc/alloy }
+    - { path: /etc/grafana/provisioning/datasources }
+    - { path: /etc/grafana/provisioning/dashboards }
+    - { path: /var/lib/grafana/dashboards, owner: grafana }
+    - { path: "/opt/victoriametrics-{{ victoriametrics_version }}" }
+    - { path: "/opt/mcp-victoriametrics-{{ mcp_victoriametrics_version }}" }
+
+- name: Download Victoria and MCP binaries
+  ansible.builtin.get_url:
+    url: "{{ item.url }}"
+    dest: "{{ item.dest }}"
+    mode: "0644"
+  loop:
+    - { url: "https://github.com/VictoriaMetrics/VictoriaMetrics/releases/download/v{{ victoriametrics_version }}/victoria-metrics-linux-{{ binary_arch }}-v{{ victoriametrics_version }}.tar.gz", dest: "/tmp/victoriametrics-{{ victoriametrics_version }}.tar.gz" }
+    - { url: "https://github.com/VictoriaMetrics/mcp-victoriametrics/releases/download/v{{ mcp_victoriametrics_version }}/mcp-victoriametrics_Linux_{{ mcp_arch }}.tar.gz", dest: "/tmp/mcp-victoriametrics-{{ mcp_victoriametrics_version }}.tar.gz" }
+
+- name: Extract Victoria and MCP binaries
+  ansible.builtin.unarchive:
+    src: "{{ item.src }}"
+    dest: "{{ item.dest }}"
+    remote_src: true
+    creates: "{{ item.dest }}/{{ item.binary }}"
+  loop:
+    - { src: "/tmp/victoriametrics-{{ victoriametrics_version }}.tar.gz", dest: "/opt/victoriametrics-{{ victoriametrics_version }}", binary: victoria-metrics-prod }
+    - { src: "/tmp/mcp-victoriametrics-{{ mcp_victoriametrics_version }}.tar.gz", dest: "/opt/mcp-victoriametrics-{{ mcp_victoriametrics_version }}", binary: mcp-victoriametrics }
+  notify: Restart monitoring services
+
+- name: Install Victoria and MCP binaries
+  ansible.builtin.copy:
+    src: "{{ item.src }}"
+    dest: "/usr/local/bin/{{ item.binary }}"
+    remote_src: true
+    mode: "0755"
+  loop:
+    - { src: "/opt/victoriametrics-{{ victoriametrics_version }}/victoria-metrics-prod", binary: victoria-metrics-prod }
+    - { src: "/opt/mcp-victoriametrics-{{ mcp_victoriametrics_version }}/mcp-victoriametrics", binary: mcp-victoriametrics }
+  notify: Restart monitoring services
+
+- name: Install Victoria systemd services
+  ansible.builtin.template:
+    src: victoria.service.j2
+    dest: "/etc/systemd/system/{{ item.name }}.service"
+    mode: "0644"
+  loop:
+    - { name: victoriametrics, description: VictoriaMetrics, binary: victoria-metrics-prod, args: "-storageDataPath=/var/lib/victoria/metrics -retentionPeriod=30d -httpListenAddr={{ service_bind_address }}:8428" }
+  notify: Restart monitoring services
+
+- name: Install MCP systemd services
+  ansible.builtin.template:
+    src: mcp.service.j2
+    dest: "/etc/systemd/system/{{ item.name }}.service"
+    mode: "0644"
+  loop:
+    - { name: mcp-victoriametrics, binary: mcp-victoriametrics, backend_name: VM_INSTANCE_ENTRYPOINT, backend_url: 'http://127.0.0.1:8428', listen_port: 8081, extra_environment: 'Environment=VM_INSTANCE_TYPE=single' }
+  notify: Restart monitoring services
+
+- name: Install Grafana and telemetry configuration
+  ansible.builtin.template:
+    src: "{{ item.src }}"
+    dest: "{{ item.dest }}"
+    owner: "{{ item.owner | default('root') }}"
+    group: "{{ item.group | default('root') }}"
+    mode: "{{ item.mode | default('0644') }}"
+  loop:
+    - { src: grafana.ini.j2, dest: /etc/grafana/grafana.ini, owner: grafana, group: grafana, mode: '0640' }
+    - { src: datasources.yaml.j2, dest: /etc/grafana/provisioning/datasources/middleware.yaml }
+    - { src: alloy.config.j2, dest: /etc/alloy/config.alloy }
+  no_log: "{{ item.src == 'grafana.ini.j2' }}"
+  notify: Restart monitoring services
+
+- name: Provision Grafana dashboard provider
+  ansible.builtin.copy:
+    src: dashboards.yaml
+    dest: /etc/grafana/provisioning/dashboards/middleware.yaml
+    owner: root
+    group: grafana
+    mode: "0644"
+  notify: Restart Grafana
+
+- name: Install Grafana dashboards
+  ansible.builtin.copy:
+    src: "dashboards/{{ item }}.json"
+    dest: "/var/lib/grafana/dashboards/{{ item }}.json"
+    owner: root
+    group: grafana
+    mode: "0644"
+  loop: [nginx, mysql, node-exporter]
+
+- name: Install Prometheus datasource plugin for Grafana
+  ansible.builtin.command:
+    cmd: grafana cli plugins install prometheus
+  notify: Restart Grafana
+
+- name: Enable monitoring services
+  ansible.builtin.systemd_service:
+    name: "{{ item }}"
+    enabled: true
+    state: started
+    daemon_reload: true
+  loop: [victoriametrics, mcp-victoriametrics, grafana-server, alloy]

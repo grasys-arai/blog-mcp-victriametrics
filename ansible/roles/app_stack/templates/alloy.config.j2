@@ -1,0 +1,18 @@
+logging {
+  level  = "info"
+  format = "logfmt"
+}
+
+prometheus.scrape "app" {
+  targets = [
+    { "__address__" = "127.0.0.1:9113", "job" = "nginx", "instance" = "{{ inventory_hostname }}" },
+    { "__address__" = "127.0.0.1:9100", "job" = "node", "instance" = "{{ inventory_hostname }}" },
+  ]
+  forward_to = [prometheus.remote_write.victoriametrics.receiver]
+}
+
+prometheus.remote_write "victoriametrics" {
+  endpoint {
+    url = "{{ victoriametrics_url }}/api/v1/write"
+  }
+}
